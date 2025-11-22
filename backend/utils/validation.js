@@ -90,5 +90,6 @@ module.exports = {
     userSchema,
     loginSchema,
     storeSchema,
-    ratingSchema
+    ratingSchema,
+    passwordSchema
 };

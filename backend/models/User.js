@@ -1,39 +1,86 @@
-const mongoose = require('mongoose');
+const { DataTypes } = require('sequelize');
+const { sequelize } = require('../config/db');
+const bcrypt = require('bcryptjs');
 
-const UserSchema = new mongoose.Schema({
+const User = sequelize.define('User', {
+    id: {
+        type: DataTypes.INTEGER,
+        primaryKey: true,
+        autoIncrement: true
+    },
     name: {
-        type: String,
-        required: [true, 'Name is required'],
-        minlength: [20, 'Name must be at least 20 characters'],
-        maxlength: [60, 'Name cannot exceed 60 characters'],
-        trim: true
+        type: DataTypes.STRING(60),
+        allowNull: false,
+        validate: {
+            len: {
+                args: [20, 60],
+                msg: 'Name must be between 20 and 60 characters'
+            },
+            notEmpty: {
+                msg: 'Name is required'
+            }
+        }
     },
     email: {
-        type: String,
-        required: [true, 'Email is required'],
+        type: DataTypes.STRING(255),
+        allowNull: false,
         unique: true,
-        // Standard email validation (more comprehensive regex can be used in controller/utils)
-        match: [/.+@.+\..+/, 'Please enter a valid email address'], 
-        lowercase: true,
-        trim: true
+        validate: {
+            isEmail: {
+                msg: 'Please enter a valid email address'
+            },
+            notEmpty: {
+                msg: 'Email is required'
+            }
+        }
     },
-    password_hash: { // Storing the hashed password
-        type: String,
-        required: [true, 'Password is required'],
-        select: false // IMPORTANT: Do not return the hash by default in queries
+    password_hash: {
+        type: DataTypes.STRING(255),
+        allowNull: false,
+        validate: {
+            notEmpty: {
+                msg: 'Password is required'
+            }
+        }
     },
     address: {
-        type: String,
-        required: [true, 'Address is required'],
-        maxlength: [400, 'Address cannot exceed 400 characters'],
-        trim: true
+        type: DataTypes.STRING(400),
+        allowNull: false,
+        validate: {
+            len: {
+                args: [1, 400],
+                msg: 'Address cannot exceed 400 characters'
+            },
+            notEmpty: {
+                msg: 'Address is required'
+            }
+        }
     },
     role: {
-        type: String,
-        enum: ['ADMIN', 'USER', 'OWNER'], // The three defined roles
-        default: 'USER', // Default role for signup is Normal User
-        required: true
+        type: DataTypes.ENUM('ADMIN', 'USER', 'OWNER'),
+        allowNull: false,
+        defaultValue: 'USER',
+        validate: {
+            isIn: {
+                args: [['ADMIN', 'USER', 'OWNER']],
+                msg: 'Role must be ADMIN, USER, or OWNER'
+            }
+        }
+    },
+    createdAt: {
+        type: DataTypes.DATE,
+        allowNull: false,
+        defaultValue: DataTypes.NOW
+    },
+    updatedAt: {
+        type: DataTypes.DATE,
+        allowNull: false,
+        defaultValue: DataTypes.NOW
     }
-}, { timestamps: true }); // Mongoose adds createdAt and updatedAt fields
+}, {
+    tableName: 'users',
+    timestamps: true,
+    underscored: false
+});
 
-module.exports = mongoose.model('User', UserSchema);
+module.exports = User;

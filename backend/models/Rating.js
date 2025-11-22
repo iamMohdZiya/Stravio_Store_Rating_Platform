@@ -1,27 +1,76 @@
-const mongoose = require('mongoose');
+const { DataTypes } = require('sequelize');
+const { sequelize } = require('../config/db');
 
-const RatingSchema = new mongoose.Schema({
-    // Reference to the Normal User who submitted the rating
-    userId: {
-        type: mongoose.Schema.ObjectId,
-        ref: 'User',
-        required: true
+const Rating = sequelize.define('Rating', {
+    id: {
+        type: DataTypes.INTEGER,
+        primaryKey: true,
+        autoIncrement: true
     },
-    // Reference to the Store being rated
+    userId: {
+        type: DataTypes.INTEGER,
+        allowNull: false,
+        references: {
+            model: 'users',
+            key: 'id'
+        },
+        validate: {
+            notEmpty: {
+                msg: 'User ID is required'
+            }
+        }
+    },
     storeId: {
-        type: mongoose.Schema.ObjectId,
-        ref: 'Store',
-        required: true
+        type: DataTypes.INTEGER,
+        allowNull: false,
+        references: {
+            model: 'stores',
+            key: 'id'
+        },
+        validate: {
+            notEmpty: {
+                msg: 'Store ID is required'
+            }
+        }
     },
     rating: {
-        type: Number,
-        required: [true, 'Rating value is required'],
-        min: [1, 'Rating must be between 1 and 5'],
-        max: [5, 'Rating must be between 1 and 5']
+        type: DataTypes.INTEGER,
+        allowNull: false,
+        validate: {
+            min: {
+                args: [1],
+                msg: 'Rating must be between 1 and 5'
+            },
+            max: {
+                args: [5],
+                msg: 'Rating must be between 1 and 5'
+            },
+            notEmpty: {
+                msg: 'Rating value is required'
+            }
+        }
+    },
+    createdAt: {
+        type: DataTypes.DATE,
+        allowNull: false,
+        defaultValue: DataTypes.NOW
+    },
+    updatedAt: {
+        type: DataTypes.DATE,
+        allowNull: false,
+        defaultValue: DataTypes.NOW
     }
-}, { timestamps: true });
+}, {
+    tableName: 'ratings',
+    timestamps: true,
+    underscored: false,
+    indexes: [
+        {
+            unique: true,
+            fields: ['userId', 'storeId'],
+            name: 'unique_user_store_rating'
+        }
+    ]
+});
 
-// Enforce that a single user can only submit one rating per store (Composite Unique Index)
-RatingSchema.index({ userId: 1, storeId: 1 }, { unique: true });
-
-module.exports = mongoose.model('Rating', RatingSchema);
+module.exports = Rating;

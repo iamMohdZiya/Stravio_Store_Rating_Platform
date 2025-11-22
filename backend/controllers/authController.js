@@ -3,16 +3,17 @@
 const User = require('../models/User');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
-const { userSchema, loginSchema } = require('../utils/validation');
+const Joi = require('joi');
+const { userSchema, loginSchema, passwordSchema } = require('../utils/validation');
 
 /**
  * Helper function to generate a JWT token
- * @param {string} id - User ID
+ * @param {number} id - User ID
  * @param {string} role - User Role
  */
 const generateToken = (id, role) => {
     return jwt.sign({ userId: id, role: role }, process.env.JWT_SECRET, {
-        expiresIn: process.env.JWT_EXPIRES_IN,
+        expiresIn: process.env.JWT_EXPIRES_IN || '7d',
     });
 };
 
@@ -30,8 +31,8 @@ exports.signup = async (req, res) => {
 
     try {
         // 2. Check if user already exists
-        let user = await User.findOne({ email });
-        if (user) {
+        const existingUser = await User.findOne({ where: { email: email.toLowerCase() } });
+        if (existingUser) {
             return res.status(400).json({ message: 'User with this email already exists.' });
         }
 
@@ -40,28 +41,28 @@ exports.signup = async (req, res) => {
         const password_hash = await bcrypt.hash(password, salt);
 
         // 4. Create and save the new User (default role is 'USER')
-        user = await User.create({
+        const user = await User.create({
             name,
-            email,
+            email: email.toLowerCase(),
             password_hash,
             address,
             role: 'USER' // Normal User signup
         });
 
         // 5. Generate Token
-        const token = generateToken(user._id, user.role);
+        const token = generateToken(user.id, user.role);
 
         // 6. Respond (only return safe data)
         res.status(201).json({
             token,
-            userId: user._id,
+            userId: user.id,
             role: user.role,
             message: 'User registered successfully.'
         });
 
     } catch (err) {
-        console.error(err.message);
-        res.status(500).send('Server Error');
+        console.error('Signup error:', err.message);
+        res.status(500).json({ message: 'Server Error' });
     }
 };
 
@@ -78,8 +79,11 @@ exports.login = async (req, res) => {
     const { email, password } = value;
 
     try {
-        // 2. Find user by email, explicitly selecting the password hash
-        const user = await User.findOne({ email }).select('+password_hash');
+        // 2. Find user by email, including password hash
+        const user = await User.findOne({ 
+            where: { email: email.toLowerCase() },
+            attributes: { include: ['password_hash'] }
+        });
         
         if (!user) {
             return res.status(401).json({ message: 'Invalid Credentials.' });
@@ -93,19 +97,19 @@ exports.login = async (req, res) => {
         }
 
         // 4. Generate Token
-        const token = generateToken(user._id, user.role);
+        const token = generateToken(user.id, user.role);
 
         // 5. Respond
         res.json({
             token,
-            userId: user._id,
+            userId: user.id,
             role: user.role,
             message: 'Login successful.'
         });
 
     } catch (err) {
-        console.error(err.message);
-        res.status(500).send('Server Error');
+        console.error('Login error:', err.message);
+        res.status(500).json({ message: 'Server Error' });
     }
 };
 
@@ -113,8 +117,6 @@ exports.login = async (req, res) => {
 // @desc    Update logged-in user's password
 // @access  Private (All Roles)
 exports.updatePassword = async (req, res) => {
-    // We assume validation for the new password happens on the frontend,
-    // but the backend must enforce the password complexity rule.
     const { password } = req.body;
     
     // Quick validation check for new password using the reusable password schema
@@ -127,7 +129,7 @@ exports.updatePassword = async (req, res) => {
 
     try {
         // Find user by ID attached by the authentication middleware
-        const user = await User.findById(req.userId).select('+password_hash');
+        const user = await User.findByPk(req.userId);
         
         if (!user) {
             return res.status(404).json({ message: 'User not found.' });
@@ -141,7 +143,7 @@ exports.updatePassword = async (req, res) => {
 
         res.json({ message: 'Password updated successfully.' });
     } catch (err) {
-        console.error(err.message);
-        res.status(500).send('Server Error');
+        console.error('Password update error:', err.message);
+        res.status(500).json({ message: 'Server Error' });
     }
 };

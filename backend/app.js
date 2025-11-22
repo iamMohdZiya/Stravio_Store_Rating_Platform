@@ -1,18 +1,17 @@
 // app.js
 const express = require('express');
-const connectDB = require('./config/db');
+const { connectDB } = require('./config/db');
+// Initialize models and associations BEFORE connecting/syncing
+require('./models');
 const authRoutes = require('./routes/auth');
 const userRoutes = require('./routes/users');
 const storeRoutes = require('./routes/stores');
 const ratingRoutes = require('./routes/ratings');
 const ownerRoutes = require('./routes/owner');
 
-
-
-
 require('dotenv').config();
 
-// Connect to database
+// Connect to database (after models are loaded)
 connectDB();
 
 const app = express();

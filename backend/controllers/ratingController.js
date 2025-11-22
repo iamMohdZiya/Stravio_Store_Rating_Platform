@@ -4,6 +4,7 @@ const Joi = require('joi');
 const Rating = require('../models/Rating');
 const Store = require('../models/Store');
 const { ratingSchema } = require('../utils/validation');
+const { Op } = require('sequelize');
 
 // @route   POST /api/ratings
 // @desc    Normal User: Submit a new rating for a store
@@ -17,16 +18,19 @@ exports.submitRating = async (req, res) => {
 
     const { storeId, rating } = value;
     const userId = req.userId;
+    const storeIdInt = parseInt(storeId);
 
     try {
         // 2. Check if the store exists
-        const store = await Store.findById(storeId);
+        const store = await Store.findByPk(storeIdInt);
         if (!store) {
             return res.status(404).json({ message: 'Store not found.' });
         }
         
         // 3. Check if user has already rated this store
-        const existingRating = await Rating.findOne({ userId, storeId });
+        const existingRating = await Rating.findOne({ 
+            where: { userId, storeId: storeIdInt } 
+        });
         if (existingRating) {
             return res.status(400).json({ 
                 message: 'You have already rated this store. Use the PUT endpoint to modify your rating.' 
@@ -34,17 +38,21 @@ exports.submitRating = async (req, res) => {
         }
 
         // 4. Create and save the new rating
-        const newRating = await Rating.create({ userId, storeId, rating });
+        const newRating = await Rating.create({ 
+            userId, 
+            storeId: storeIdInt, 
+            rating 
+        });
 
         res.status(201).json({
             message: 'Rating submitted successfully.',
-            ratingId: newRating._id,
+            ratingId: newRating.id,
             rating: newRating.rating
         });
 
     } catch (err) {
-        console.error(err.message);
-        res.status(500).send('Server Error');
+        console.error('Rating submission error:', err.message);
+        res.status(500).json({ message: 'Server Error' });
     }
 };
 
@@ -62,12 +70,14 @@ exports.modifyRating = async (req, res) => {
         return res.status(400).json({ message: error.details[0].message });
     }
     
-    const storeId = req.params.storeId;
+    const storeId = parseInt(req.params.storeId);
     const userId = req.userId;
 
     try {
         // 2. Find the existing rating by user and store ID
-        const existingRating = await Rating.findOne({ userId, storeId });
+        const existingRating = await Rating.findOne({ 
+            where: { userId, storeId } 
+        });
 
         if (!existingRating) {
             return res.status(404).json({ 
@@ -81,12 +91,12 @@ exports.modifyRating = async (req, res) => {
 
         res.json({
             message: 'Rating modified successfully.',
-            ratingId: existingRating._id,
+            ratingId: existingRating.id,
             newRating: existingRating.rating
         });
 
     } catch (err) {
-        console.error(err.message);
-        res.status(500).send('Server Error');
+        console.error('Rating modification error:', err.message);
+        res.status(500).json({ message: 'Server Error' });
     }
 };

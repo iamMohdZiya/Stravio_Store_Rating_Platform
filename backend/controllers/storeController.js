@@ -4,7 +4,8 @@ const Store = require('../models/Store');
 const User = require('../models/User');
 const Rating = require('../models/Rating');
 const { storeSchema } = require('../utils/validation');
-const mongoose = require('mongoose');
+const { Op } = require('sequelize');
+const { sequelize } = require('../config/db');
 
 // @route   POST /api/stores
 // @desc    Admin: Create a new store
@@ -17,32 +18,41 @@ exports.createStore = async (req, res) => {
     }
     
     const { name, email, address, ownerId } = value;
+    const ownerIdInt = parseInt(ownerId);
 
     // 2. Additional check: Ensure ownerId belongs to a user with role 'OWNER'
     try {
-        const owner = await User.findById(ownerId);
+        const owner = await User.findByPk(ownerIdInt);
         if (!owner || owner.role !== 'OWNER') {
             return res.status(400).json({ 
                 message: 'Invalid ownerId or user is not a Store Owner.' 
             });
         }
         
-        // 3. Check for uniqueness constraints (name, email)
-        if (await Store.findOne({ name })) {
+        // 3. Check for uniqueness constraints (name, email, ownerId)
+        const existingName = await Store.findOne({ where: { name } });
+        if (existingName) {
             return res.status(400).json({ message: 'Store name already exists.' });
         }
-        if (await Store.findOne({ email })) {
+        const existingEmail = await Store.findOne({ where: { email: email.toLowerCase() } });
+        if (existingEmail) {
             return res.status(400).json({ message: 'Store email already exists.' });
         }
-        if (await Store.findOne({ ownerId })) {
+        const existingOwner = await Store.findOne({ where: { ownerId: ownerIdInt } });
+        if (existingOwner) {
             return res.status(400).json({ message: 'Owner is already assigned to a store.' });
         }
 
         // 4. Create and save the new Store
-        const store = await Store.create({ name, email, address, ownerId });
+        const store = await Store.create({ 
+            name, 
+            email: email.toLowerCase(), 
+            address, 
+            ownerId: ownerIdInt 
+        });
 
         res.status(201).json({
-            id: store._id,
+            id: store.id,
             name: store.name,
             address: store.address,
             ownerId: store.ownerId,
@@ -50,8 +60,8 @@ exports.createStore = async (req, res) => {
         });
 
     } catch (err) {
-        console.error(err.message);
-        res.status(500).send('Server Error');
+        console.error('Create store error:', err.message);
+        res.status(500).json({ message: 'Server Error' });
     }
 };
 
@@ -64,81 +74,85 @@ exports.getStores = async (req, res) => {
         const currentUserId = req.userId; // User ID from the JWT token
 
         // 1. Build Search Filter
-        const filter = {};
-        if (name) filter.name = { $regex: name, $options: 'i' };
-        if (address) filter.address = { $regex: address, $options: 'i' };
+        const where = {};
+        if (name) where.name = { [Op.like]: `%${name}%` };
+        if (address) where.address = { [Op.like]: `%${address}%` };
 
-        // 2. MongoDB Aggregation Pipeline
-        const pipeline = [
-            // Stage 1: Filter stores based on query parameters
-            { $match: filter },
-            
-            // Stage 2: Calculate Average Rating
-            {
-                $lookup: {
-                    from: 'ratings', // The name of the collection (usually lowercase and plural)
-                    localField: '_id',
-                    foreignField: 'storeId',
-                    as: 'all_ratings'
-                }
-            },
-            {
-                $addFields: {
-                    averageRating: { $avg: '$all_ratings.rating' },
-                    // Project only the current user's rating for display
-                    currentUserRating: {
-                        $filter: {
-                            input: '$all_ratings',
-                            as: 'rating',
-                            cond: { $eq: ['$$rating.userId', new mongoose.Types.ObjectId(currentUserId)] }
-                        }
-                    }
-                }
-            },
-            
-            // Stage 3: Project the final output shape
-            {
-                $project: {
-                    _id: 1,
-                    name: 1,
-                    email: 1,
-                    address: 1,
-                    overallRating: { 
-                        // Format to 2 decimal places or null
-                        $cond: {
-                            if: { $ne: ['$averageRating', null] },
-                            then: { $round: ['$averageRating', 2] },
-                            else: null
-                        }
-                    },
-                    userSubmittedRating: { 
-                        // Extract the rating value if it exists, otherwise null
-                        $arrayElemAt: ['$currentUserRating.rating', 0]
-                    },
-                    createdAt: 1
-                }
-            }
-        ];
+        // 2. Get all stores
+        const stores = await Store.findAll({ where });
         
-        // 3. Sorting
-        const sort = {};
+        // Get all ratings for these stores
+        const storeIds = stores.map(s => s.id);
+        const ratings = storeIds.length > 0
+            ? await Rating.findAll({
+                where: { storeId: { [Op.in]: storeIds } },
+                attributes: ['id', 'rating', 'userId', 'storeId']
+            })
+            : [];
+
+        // 3. Process results to calculate ratings and format
+        const formattedStores = stores.map(store => {
+            const storeData = store.toJSON();
+            const storeRatings = ratings.filter(r => r.storeId === store.id);
+            
+            // Calculate overall rating
+            let overallRating = null;
+            if (storeRatings.length > 0) {
+                const sum = storeRatings.reduce((acc, r) => acc + r.rating, 0);
+                overallRating = parseFloat((sum / storeRatings.length).toFixed(2));
+            }
+            
+            // Find user's rating
+            let userSubmittedRating = null;
+            const userRating = storeRatings.find(r => r.userId === currentUserId);
+            if (userRating) {
+                userSubmittedRating = userRating.rating;
+            }
+            
+            return {
+                _id: storeData.id,
+                id: storeData.id,
+                name: storeData.name,
+                email: storeData.email,
+                address: storeData.address,
+                overallRating: overallRating,
+                userSubmittedRating: userSubmittedRating,
+                createdAt: storeData.createdAt
+            };
+        });
+
+        // 4. Sorting
         if (sortBy) {
-             // 'overallRating' is a projected field, others are direct fields
-            sort[sortBy] = sortOrder === 'desc' ? -1 : 1;
+            formattedStores.sort((a, b) => {
+                let aVal = a[sortBy];
+                let bVal = b[sortBy];
+                
+                // Handle null values
+                if (aVal === null || aVal === undefined) aVal = sortOrder === 'desc' ? -Infinity : Infinity;
+                if (bVal === null || bVal === undefined) bVal = sortOrder === 'desc' ? -Infinity : Infinity;
+                
+                // Convert to numbers if they're rating values
+                if (sortBy === 'overallRating' || sortBy === 'userSubmittedRating') {
+                    aVal = parseFloat(aVal) || 0;
+                    bVal = parseFloat(bVal) || 0;
+                }
+                
+                if (sortOrder === 'desc') {
+                    return bVal > aVal ? 1 : bVal < aVal ? -1 : 0;
+                } else {
+                    return aVal > bVal ? 1 : aVal < bVal ? -1 : 0;
+                }
+            });
         } else {
-            sort.createdAt = -1;
+            // Default sort by createdAt desc
+            formattedStores.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
         }
 
-        pipeline.push({ $sort: sort });
-
-
-        const stores = await Store.aggregate(pipeline);
-
-        res.json({ count: stores.length, stores });
+        res.json({ count: formattedStores.length, stores: formattedStores });
 
     } catch (err) {
-        console.error(err.message);
-        res.status(500).send('Server Error');
+        console.error('Get stores error:', err.message);
+        res.status(500).json({ message: 'Server Error' });
     }
 };
 
@@ -146,34 +160,32 @@ exports.getStores = async (req, res) => {
 // @desc    All: View single store details
 // @access  Private (All Roles)
 exports.getStoreDetails = async (req, res) => {
-    // This endpoint could reuse the aggregation logic above but only match on the specific _id
-    // For brevity, we'll keep it simple:
-
     try {
-        const storeId = req.params.id;
-        const store = await Store.findById(storeId);
+        const storeId = parseInt(req.params.id);
+        const store = await Store.findByPk(storeId);
 
         if (!store) {
             return res.status(404).json({ message: 'Store not found.' });
         }
 
         // Calculate average rating for this specific store
-        const result = await Rating.aggregate([
-            { $match: { storeId: store._id } },
-            { $group: { 
-                _id: null, 
-                averageRating: { $avg: "$rating" } 
-            }}
-        ]);
+        const ratings = await Rating.findAll({
+            where: { storeId: store.id },
+            attributes: ['rating']
+        });
         
-        const overallRating = result.length > 0 ? parseFloat(result[0].averageRating).toFixed(2) : 'N/A';
+        const overallRating = ratings.length > 0 
+            ? parseFloat((ratings.reduce((sum, r) => sum + r.rating, 0) / ratings.length).toFixed(2))
+            : null;
 
         // Get current user's submitted rating
         let userSubmittedRating = null;
         if (req.userId) {
             const userRating = await Rating.findOne({ 
-                userId: req.userId, 
-                storeId: store._id 
+                where: { 
+                    userId: req.userId, 
+                    storeId: store.id 
+                } 
             });
             if (userRating) {
                 userSubmittedRating = userRating.rating;
@@ -181,7 +193,7 @@ exports.getStoreDetails = async (req, res) => {
         }
 
         res.json({
-            id: store._id,
+            id: store.id,
             name: store.name,
             email: store.email,
             address: store.address,
@@ -190,7 +202,7 @@ exports.getStoreDetails = async (req, res) => {
         });
         
     } catch (err) {
-        console.error(err.message);
-        res.status(500).send('Server Error');
+        console.error('Get store details error:', err.message);
+        res.status(500).json({ message: 'Server Error' });
     }
 };

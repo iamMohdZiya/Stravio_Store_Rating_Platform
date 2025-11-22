@@ -1,50 +1,81 @@
-const mongoose = require('mongoose');
+const { DataTypes } = require('sequelize');
+const { sequelize } = require('../config/db');
 
-const StoreSchema = new mongoose.Schema({
+const Store = sequelize.define('Store', {
+    id: {
+        type: DataTypes.INTEGER,
+        primaryKey: true,
+        autoIncrement: true
+    },
     name: {
-        type: String,
-        required: [true, 'Store name is required'],
+        type: DataTypes.STRING(255),
+        allowNull: false,
         unique: true,
-        trim: true
+        validate: {
+            notEmpty: {
+                msg: 'Store name is required'
+            }
+        }
     },
     email: {
-        type: String,
-        required: [true, 'Store email is required'],
+        type: DataTypes.STRING(255),
+        allowNull: false,
         unique: true,
-        match: [/.+@.+\..+/, 'Please enter a valid store email address'],
-        lowercase: true,
-        trim: true
+        validate: {
+            isEmail: {
+                msg: 'Please enter a valid store email address'
+            },
+            notEmpty: {
+                msg: 'Store email is required'
+            }
+        }
     },
     address: {
-        type: String,
-        required: [true, 'Store address is required'],
-        maxlength: [400, 'Address cannot exceed 400 characters'],
-        trim: true
+        type: DataTypes.STRING(400),
+        allowNull: false,
+        validate: {
+            len: {
+                args: [1, 400],
+                msg: 'Address cannot exceed 400 characters'
+            },
+            notEmpty: {
+                msg: 'Store address is required'
+            }
+        }
     },
-    // Reference to the User who is the Store Owner (role: 'OWNER')
     ownerId: {
-        type: mongoose.Schema.ObjectId,
-        ref: 'User',
-        required: [true, 'Store owner is required'],
-        unique: true // A user can only own one store in this simple schema
+        type: DataTypes.INTEGER,
+        allowNull: false,
+        unique: true,
+        references: {
+            model: 'users',
+            key: 'id'
+        },
+        validate: {
+            notEmpty: {
+                msg: 'Store owner is required'
+            }
+        }
     },
-    // Virtual field for average rating (calculated in controller or using MongoDB aggregation)
     averageRating: {
-        type: Number,
-        default: 0
+        type: DataTypes.DECIMAL(3, 2),
+        allowNull: true,
+        defaultValue: 0
+    },
+    createdAt: {
+        type: DataTypes.DATE,
+        allowNull: false,
+        defaultValue: DataTypes.NOW
+    },
+    updatedAt: {
+        type: DataTypes.DATE,
+        allowNull: false,
+        defaultValue: DataTypes.NOW
     }
-}, { 
+}, {
+    tableName: 'stores',
     timestamps: true,
-    toJSON: { virtuals: true }, // Include virtuals when converting to JSON
-    toObject: { virtuals: true } // Include virtuals when converting to JS object
+    underscored: false
 });
 
-// We can add a virtual property to get all ratings for a store, though aggregation is better for average
-StoreSchema.virtual('ratings', {
-    ref: 'Rating',
-    localField: '_id',
-    foreignField: 'storeId',
-    justOne: false
-});
-
-module.exports = mongoose.model('Store', StoreSchema);
+module.exports = Store;

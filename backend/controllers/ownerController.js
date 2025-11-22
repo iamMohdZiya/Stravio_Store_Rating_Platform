@@ -3,7 +3,7 @@
 const Store = require('../models/Store');
 const Rating = require('../models/Rating');
 const User = require('../models/User');
-const mongoose = require('mongoose');
+const { Op } = require('sequelize');
 
 // @route   GET /api/owner/dashboard
 // @desc    Store Owner: View dashboard data (average rating, user ratings list)
@@ -13,7 +13,7 @@ exports.getOwnerDashboard = async (req, res) => {
 
     try {
         // 1. Find the store owned by the current user
-        const store = await Store.findOne({ ownerId });
+        const store = await Store.findOne({ where: { ownerId } });
 
         if (!store) {
             return res.status(404).json({ 
@@ -21,65 +21,46 @@ exports.getOwnerDashboard = async (req, res) => {
             });
         }
 
-        const storeId = store._id;
+        const storeId = store.id;
 
-        // 2. MongoDB Aggregation to get Average Rating and Ratings List with User Info
-        const dashboardData = await Rating.aggregate([
-            // Stage 1: Filter ratings belonging to the owner's store
-            { $match: { storeId: storeId } },
-
-            // Stage 2: Lookup the user details for each rating
-            {
-                $lookup: {
-                    from: 'users', // Name of the User collection
-                    localField: 'userId',
-                    foreignField: '_id',
-                    as: 'user_info'
+        // 2. Get all ratings for this store with user information
+        const ratings = await Rating.findAll({
+            where: { storeId },
+            include: [
+                {
+                    model: User,
+                    as: 'user',
+                    attributes: ['id', 'name', 'email']
                 }
-            },
+            ],
+            order: [['createdAt', 'DESC']]
+        });
 
-            // Stage 3: Unwind user_info array (since userId is unique, this is safe)
-            { $unwind: '$user_info' },
+        // 3. Calculate average rating
+        let averageRating = 0;
+        if (ratings.length > 0) {
+            const sum = ratings.reduce((acc, rating) => acc + rating.rating, 0);
+            averageRating = parseFloat((sum / ratings.length).toFixed(2));
+        }
 
-            // Stage 4: Group all results to calculate the average rating
-            {
-                $group: {
-                    _id: '$storeId',
-                    averageRating: { $avg: '$rating' },
-                    ratingsList: { // Create an array of rating details
-                        $push: {
-                            ratingId: '$_id',
-                            rating: '$rating',
-                            submittedAt: '$createdAt',
-                            userName: '$user_info.name',
-                            userEmail: '$user_info.email'
-                        }
-                    }
-                }
-            },
-            
-            // Stage 5: Project final data structure
-            {
-                $project: {
-                    _id: 0,
-                    averageRating: { $round: ['$averageRating', 2] }, // Round to 2 decimals
-                    ratingsList: 1
-                }
-            }
-        ]);
-
-        // 3. Handle cases where there are no ratings yet
-        const result = dashboardData[0] || { averageRating: 0.00, ratingsList: [] };
+        // 4. Format ratings list
+        const usersWhoRated = ratings.map(rating => ({
+            ratingId: rating.id,
+            rating: rating.rating,
+            submittedAt: rating.createdAt,
+            userName: rating.user ? rating.user.name : 'Unknown',
+            userEmail: rating.user ? rating.user.email : 'Unknown'
+        }));
 
         res.json({
-            storeId: store._id,
+            storeId: store.id,
             storeName: store.name,
-            averageRating: result.averageRating,
-            usersWhoRated: result.ratingsList
+            averageRating: averageRating || 0,
+            usersWhoRated: usersWhoRated
         });
 
     } catch (err) {
-        console.error(err.message);
-        res.status(500).send('Server Error');
+        console.error('Get owner dashboard error:', err.message);
+        res.status(500).json({ message: 'Server Error' });
     }
 };
